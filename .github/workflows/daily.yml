@@ -31,8 +31,7 @@ jobs:
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           AI_PROVIDER: ${{ secrets.AI_PROVIDER }}
-          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
-          CLAUDE_BASE_URL: ${{ secrets.CLAUDE_BASE_URL }}
-          CLAUDE_MODEL: ${{ secrets.CLAUDE_MODEL }}
-          CLAUDE_API_FORMAT: ${{ secrets.CLAUDE_API_FORMAT }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
+          DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
         run: python ramsey_digest.py
