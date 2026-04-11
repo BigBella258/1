@@ -398,52 +398,58 @@ Abstract: {abstract}
 ---
 """
 
-    prompt = f"""You are a mathematics research expert specializing in Graph Theory and Ramsey Theory, skilled in academic writing in Chinese.
+    prompt = f"""你是图论与 Ramsey Theory 方向的数学研究专家，精通中文学术写作。
 
-Below are {len(papers)} papers/discussions related to Ramsey Theory collected today ({DATE_STR}) from multiple academic sources (arXiv, Semantic Scholar, OpenAlex, journal RSS, MathOverflow, etc.).
+以下是今日（{DATE_STR}）从多个学术数据源（arXiv、Semantic Scholar、
+OpenAlex、核心期刊、MathOverflow 等）汇总的 {len(papers)} 篇与
+Ramsey Theory 相关的最新论文/讨论。
 
-For each paper/discussion, please output the following structured Chinese interpretation:
+## 对每篇论文/讨论，请输出：
 
-### Paper X: [Chinese translated title]
-- **Original title**: [English title]
-- **Authors**: [author list]
-- **Source**: [data source + journal name]
-- **Link**: [URL]
-- **Chinese abstract** (3-5 sentences, professional yet accessible)
-- **Main contribution** (1-2 sentences on the key new result or method)
-- **Methods** (key techniques/tools used)
-- **Academic context** (which branch of Ramsey Theory, related classical results)
-- **Recommendation**: star-1 to star-5
+### 📄 论文 X：[中文翻译的标题]
+- **原标题**：[英文原标题]
+- **作者**：[作者]
+- **来源**：[数据源 + 期刊名]
+- **链接**：[URL]
+- **中文摘要**（3-5句，专业且易懂）
+- **主要贡献**（核心新结果/新方法）
+- **技术方法**（关键工具）
+- **学术脉络**（属于 Ramsey Theory 哪个分支，关联哪些经典结果）
+- **推荐指数**：⭐-⭐⭐⭐⭐⭐
 
-For MathOverflow discussions, analyze the academic value of the question and key points from existing answers.
+对于 MathOverflow 讨论，改为分析问题的学术价值和已有回答的要点。
 
-Finally, provide a "Daily Summary":
-1. Overall trend today
-2. The 1-2 most noteworthy papers
-3. Connection to active research directions (e.g., Gallai-Ramsey numbers, graph coloring Ramsey problems, etc.)
+## 最后给出「今日综述」：
+1. 今日整体趋势
+2. 最值得关注的 1-2 篇
+3. 与近期研究方向的关联（如 Gallai-Ramsey 数、图着色 Ramsey 问题等）
 
-Paper list:
+论文列表：
 {papers_text}
 
-Please output in Markdown format. Use $...$ for math formulas. Write everything in Chinese."""
+请用 Markdown 格式输出，包含数学公式时使用 $...$ 格式。"""
 
     return prompt
 
 
 # ============================================================
-#  Call AI (OpenAI compatible format for proxy)
+#  AI 调用函数
 # ============================================================
-def call_claude(prompt: str) -> str:
+def call_deepseek(prompt: str) -> str:
+    """调用 DeepSeek API（OpenAI 兼容格式）"""
     from openai import OpenAI
 
-    base_url = os.environ.get("CLAUDE_BASE_URL", "https://dk.claudecode.love/v1")
-    api_key = os.environ.get("CLAUDE_API_KEY", "")
-    model = os.environ.get("CLAUDE_MODEL", "claude-opus-4-6")
+    base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
-    print(f"  AI proxy: {base_url}")
-    print(f"  Model: {model}")
+    print(f"  🌐 DeepSeek API: {base_url}")
+    print(f"  🤖 模型: {model}")
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+    )
 
     response = client.chat.completions.create(
         model=model,
@@ -452,7 +458,7 @@ def call_claude(prompt: str) -> str:
         messages=[
             {
                 "role": "system",
-                "content": "You are a combinatorics expert specializing in Ramsey Theory, skilled in writing academic paper interpretations in Chinese.",
+                "content": "你是精通 Ramsey Theory 的组合数学专家，擅长用中文撰写学术论文解读。",
             },
             {"role": "user", "content": prompt},
         ],
@@ -467,33 +473,41 @@ def fallback_digest(papers: List[Paper]) -> str:
         authors = ", ".join(p.authors[:3])
         summary = " ".join(p.abstract.split())[:200] + "..."
         lines.append(
-            f"### Paper {i}: {p.title}\n"
-            f"- Source: {p.source}\n"
-            f"- Authors: {authors}\n"
-            f"- Link: {p.url}\n"
-            f"- Abstract: {summary}\n"
+            f"### 论文 {i}: {p.title}\n"
+            f"- 来源: {p.source}\n"
+            f"- 作者: {authors}\n"
+            f"- 链接: {p.url}\n"
+            f"- 摘要: {summary}\n"
         )
     return "\n".join(lines)
 
 
 def generate_ai_digest(papers: List[Paper]) -> str:
     if not papers:
-        return "No new Ramsey Theory papers today."
+        return "今日暂无符合条件的 Ramsey Theory 新论文。"
 
     prompt = build_prompt(papers)
-    print(f"Prompt length: {len(prompt)} chars")
+    print(f"📝 Prompt 长度: {len(prompt)} 字符")
+
+    ai_provider = os.environ.get("AI_PROVIDER", "deepseek")
 
     try:
-        print("Calling Claude via proxy...")
-        return call_claude(prompt)
+        if ai_provider == "deepseek":
+            print("🤖 调用 DeepSeek API...")
+            return call_deepseek(prompt)
+        else:
+            # 保留 Claude 兼容性（如果需要）
+            print("🤖 调用 Claude API...")
+            # 这里可以保留 call_claude 函数，但你不需要可以删除
+            return fallback_digest(papers)
     except Exception as e:
-        print(f"AI generation failed: {e}")
+        print(f"❌ AI 生成失败: {e}")
         traceback.print_exc()
         return fallback_digest(papers)
 
 
 # ============================================================
-#  Send Email
+#  发送邮件
 # ============================================================
 def send_email(digest: str, count: int, source_stats: dict):
     SENDER = os.environ["SENDER_EMAIL"]
@@ -501,6 +515,9 @@ def send_email(digest: str, count: int, source_stats: dict):
     RECEIVER = os.environ.get("RECEIVER_EMAIL", SENDER)
     SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.163.com")
     SMTP_PORT = int(os.environ.get("SMTP_PORT", 465))
+
+    # 支持多个收件人（逗号分隔）
+    receivers = [r.strip() for r in RECEIVER.split(",")] if RECEIVER else [SENDER]
 
     try:
         import markdown as md_lib
@@ -513,22 +530,22 @@ def send_email(digest: str, count: int, source_stats: dict):
     html_body = f"""
     <html><body style="font-family:Arial,sans-serif; max-width:760px;
                        margin:auto; padding:20px; color:#333; line-height:1.7;">
-    <h1 style="color:#1565C0;">Ramsey Theory Daily Digest</h1>
-    <p style="color:#666;">{DATE_STR} | Total: {count} | {stats_html}</p>
+    <h1 style="color:#1565C0;">Ramsey Theory 每日论文解读</h1>
+    <p style="color:#666;">{DATE_STR} | 共 {count} 篇 | {stats_html}</p>
     <hr>
     {html_content}
     <hr>
     <p style="color:#aaa; font-size:11px;">
-    Sources: arXiv + Semantic Scholar + OpenAlex + Journal RSS + MathOverflow<br>
-    AI: Claude via proxy
+    数据源: arXiv + Semantic Scholar + OpenAlex + 期刊RSS + MathOverflow<br>
+    AI: DeepSeek
     </p>
     </body></html>
     """
 
     msg = EmailMessage()
-    msg["Subject"] = f"Ramsey Theory Daily Digest {DATE_STR} ({count} papers)"
+    msg["Subject"] = f"Ramsey Theory 每日解读 {DATE_STR}（{count}篇）"
     msg["From"] = formataddr(("Ramsey Digest", SENDER))
-    msg["To"] = RECEIVER
+    msg["To"] = ", ".join(receivers)
     msg.set_content(digest)
     msg.add_alternative(html_body, subtype="html")
 
@@ -536,16 +553,16 @@ def send_email(digest: str, count: int, source_stats: dict):
         server.login(SENDER, SMTP_PASSWORD)
         server.send_message(msg)
 
-    print(f"Email sent to {RECEIVER}")
+    print(f"邮件已发送到: {', '.join(receivers)}")
 
 
 # ============================================================
-#  Main
+#  主函数
 # ============================================================
 def main():
-    print(f"=== Ramsey Theory Full-Source Daily Digest ({DATE_STR}) ===")
+    print(f"=== Ramsey Theory 全源每日论文解读 ({DATE_STR}) ===")
 
-    # Step 1: Fetch from all sources
+    # 第一步：多源抓取
     all_papers = []
     source_stats = {}
 
@@ -563,32 +580,32 @@ def main():
             source_stats[name] = len(papers)
             all_papers.extend(papers)
         except Exception as e:
-            print(f"{name} failed: {e}")
+            print(f"{name} 失败: {e}")
             source_stats[name] = 0
 
-    # Step 2: Deduplicate
+    # 第二步：去重
     unique_papers = deduplicate(all_papers)
     total = len(unique_papers)
 
-    print(f"\nSource stats: {source_stats}")
-    print(f"Total after dedup: {total}")
+    print(f"\n来源统计: {source_stats}")
+    print(f"去重后总计: {total} 篇")
 
-    # Step 3: AI digest
+    # 第三步：AI 解读
     if unique_papers:
         digest = generate_ai_digest(unique_papers)
     else:
-        digest = f"# {DATE_STR} Ramsey Theory Daily\n\nNo new papers today."
+        digest = f"# {DATE_STR} Ramsey Theory 日报\n\n今日暂无新论文。"
 
-    print(f"Digest length: {len(digest)} chars")
+    print(f"解读长度: {len(digest)} 字符")
 
-    # Step 4: Send email
+    # 第四步：发送邮件
     try:
         send_email(digest, total, source_stats)
     except Exception as e:
-        print(f"Email failed: {e}")
+        print(f"邮件发送失败: {e}")
         traceback.print_exc()
 
-    print("=== Done ===")
+    print("=== 完成 ===")
 
 
 if __name__ == "__main__":
