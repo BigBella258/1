@@ -2,7 +2,7 @@ name: Ramsey Theory Daily Digest
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 20 * * *'   # UTC 20:00 = 北京时间 04:00
   workflow_dispatch:
 
 jobs:
