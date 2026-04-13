@@ -29,7 +29,7 @@ class Paper:
         return hashlib.md5(normalized.encode()).hexdigest()
 
 now_utc = datetime.now(timezone.utc)
-since_utc = now_utc - timedelta(days=1)
+since_utc = now_utc - timedelta(hours=36)
 DATE_STR = now_utc.strftime("%Y-%m-%d")
 
 RAMSEY_KEYWORDS = [
