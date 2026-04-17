@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import time
 import arxiv
 import requests
@@ -47,6 +48,29 @@ KEYWORD_PATTERN = re.compile(
 def is_ramsey_related(title, abstract=""):
     text = f"{title} {abstract}"
     return bool(KEYWORD_PATTERN.search(text))
+
+SENT_FILE = "sent_papers.json"
+
+def load_sent():
+    try:
+        with open(SENT_FILE, "r") as f:
+            return set(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+def save_sent(fingerprints):
+    with open(SENT_FILE, "w") as f:
+        json.dump(list(fingerprints), f)
+
+def filter_new_papers(papers: List[Paper]) -> List[Paper]:
+    sent = load_sent()
+    new_papers = [p for p in papers if p.fingerprint not in sent]
+    all_sent = sent | {p.fingerprint for p in papers}
+    if len(all_sent) > 500:
+        all_sent = set(list(all_sent)[-500:])
+    save_sent(all_sent)
+    print(f"Filter: {len(papers)} total, {len(new_papers)} new, {len(papers) - len(new_papers)} already sent")
+    return new_papers
 
 def fetch_arxiv() -> List[Paper]:
     print(">>> [arXiv] querying...")
@@ -189,6 +213,14 @@ def fetch_journal_rss() -> List[Paper]:
                 pub_date = ""
                 if hasattr(entry, "published_parsed") and entry.published_parsed:
                     pub_date = time.strftime("%Y-%m-%d", entry.published_parsed)
+                if pub_date:
+                    try:
+                        pd = datetime.strptime(pub_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                        if pd < since_utc:
+                            print(f"    skipped (old): {title[:50]}")
+                            continue
+                    except ValueError:
+                        pass
                 authors = [a.get("name", "") for a in entry.authors] if hasattr(entry, "authors") else ([entry.author] if hasattr(entry, "author") else [])
                 papers.append(Paper(
                     title=title,
@@ -337,7 +369,7 @@ def generate_ai_digest(papers: List[Paper]) -> str:
     print(">>> 调用 DeepSeek API...")
     try:
         result = call_deepseek(prompt)
-        print(f">>> DeepSeek 调用成功！")
+        print(">>> DeepSeek 调用成功！")
         return result
     except Exception as e:
         print(f">>> DeepSeek 调用失败: {e}")
@@ -396,9 +428,10 @@ def main():
             source_stats[name] = 0
 
     unique_papers = deduplicate(all_papers)
+    unique_papers = filter_new_papers(unique_papers)
     total = len(unique_papers)
     print(f"\n来源统计: {source_stats}")
-    print(f"去重后总计: {total} 篇")
+    print(f"最终论文数: {total} 篇")
 
     digest = generate_ai_digest(unique_papers) if unique_papers else f"# {DATE_STR}\n\n今日暂无新论文。"
     print(f"解读长度: {len(digest)} 字符")
