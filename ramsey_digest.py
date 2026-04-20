@@ -30,8 +30,15 @@ class Paper:
         return hashlib.md5(normalized.encode()).hexdigest()
 
 now_utc = datetime.now(timezone.utc)
-since_utc = now_utc - timedelta(hours=36)
 DATE_STR = now_utc.strftime("%Y-%m-%d")
+
+# 搜索窗口：过去7天（确保不漏论文）
+SEARCH_WINDOW = timedelta(days=7)
+since_utc = now_utc - SEARCH_WINDOW
+
+# 论文日期底线：不接受超过30天的论文
+MAX_AGE = timedelta(days=30)
+oldest_allowed = now_utc - MAX_AGE
 
 RAMSEY_KEYWORDS = [
     "Ramsey", "Gallai-Ramsey", "Ramsey number", "Ramsey multiplicity",
@@ -49,6 +56,27 @@ def is_ramsey_related(title, abstract=""):
     text = f"{title} {abstract}"
     return bool(KEYWORD_PATTERN.search(text))
 
+def parse_date(date_str):
+    """尝试解析日期字符串，返回 datetime 或 None"""
+    if not date_str or date_str == "unknown":
+        return None
+    for fmt in ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"]:
+        try:
+            return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+def is_recent(date_str):
+    """检查日期是否在允许范围内（最近30天）"""
+    dt = parse_date(date_str)
+    if dt is None:
+        return False  # 没有日期的论文直接跳过
+    return dt >= oldest_allowed
+
+# ============================================================
+#  去重缓存：避免重复发送
+# ============================================================
 SENT_FILE = "sent_papers.json"
 
 def load_sent():
@@ -72,6 +100,9 @@ def filter_new_papers(papers: List[Paper]) -> List[Paper]:
     print(f"Filter: {len(papers)} total, {len(new_papers)} new, {len(papers) - len(new_papers)} already sent")
     return new_papers
 
+# ============================================================
+#  Source 1: arXiv
+# ============================================================
 def fetch_arxiv() -> List[Paper]:
     print(">>> [arXiv] querying...")
     query = (
@@ -90,7 +121,8 @@ def fetch_arxiv() -> List[Paper]:
     papers = []
     try:
         for r in client.results(search):
-            if r.published.replace(tzinfo=timezone.utc) < since_utc:
+            pub_date = r.published.replace(tzinfo=timezone.utc)
+            if pub_date < since_utc:
                 continue
             papers.append(Paper(
                 title=r.title,
@@ -106,6 +138,9 @@ def fetch_arxiv() -> List[Paper]:
     print(f"  arXiv: {len(papers)} papers")
     return papers
 
+# ============================================================
+#  Source 2: Semantic Scholar
+# ============================================================
 def fetch_semantic_scholar() -> List[Paper]:
     print(">>> [Semantic Scholar] querying...")
     S2_API = "https://api.semanticscholar.org/graph/v1"
@@ -127,6 +162,10 @@ def fetch_semantic_scholar() -> List[Paper]:
                 abstract = item.get("abstract", "") or ""
                 if not is_ramsey_related(title, abstract):
                     continue
+                # 严格日期过滤
+                if not is_recent(pub_date):
+                    print(f"    skipped (old): {pub_date} {title[:40]}")
+                    continue
                 papers.append(Paper(
                     title=title,
                     authors=[a.get("name", "") for a in item.get("authors", [])],
@@ -143,6 +182,9 @@ def fetch_semantic_scholar() -> List[Paper]:
     print(f"  Semantic Scholar: {len(papers)} papers")
     return papers
 
+# ============================================================
+#  Source 3: OpenAlex
+# ============================================================
 def fetch_openalex() -> List[Paper]:
     print(">>> [OpenAlex] querying...")
     papers = []
@@ -158,6 +200,10 @@ def fetch_openalex() -> List[Paper]:
         resp.raise_for_status()
         for work in resp.json().get("results", []):
             title = work.get("title", "")
+            pub_date = work.get("publication_date", "")
+            # 严格日期过滤
+            if not is_recent(pub_date):
+                continue
             abstract_inv = work.get("abstract_inverted_index", {})
             if abstract_inv:
                 max_pos = max(pos for positions in abstract_inv.values() for pos in positions)
@@ -179,7 +225,7 @@ def fetch_openalex() -> List[Paper]:
                 abstract=abstract,
                 url=primary_loc.get("landing_page_url", "") or doi_url or "",
                 source="OpenAlex",
-                published=work.get("publication_date", "unknown"),
+                published=pub_date,
                 doi=doi_url.replace("https://doi.org/", "") if doi_url else None,
                 journal=primary_loc.get("source", {}).get("display_name", "") if primary_loc else "",
             ))
@@ -188,6 +234,9 @@ def fetch_openalex() -> List[Paper]:
     print(f"  OpenAlex: {len(papers)} papers")
     return papers
 
+# ============================================================
+#  Source 4: Journal RSS
+# ============================================================
 def fetch_journal_rss() -> List[Paper]:
     print(">>> [Journal RSS] querying...")
     RSS_FEEDS = {
@@ -213,14 +262,16 @@ def fetch_journal_rss() -> List[Paper]:
                 pub_date = ""
                 if hasattr(entry, "published_parsed") and entry.published_parsed:
                     pub_date = time.strftime("%Y-%m-%d", entry.published_parsed)
-                if pub_date:
-                    try:
-                        pd = datetime.strptime(pub_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                        if pd < since_utc:
-                            print(f"    skipped (old): {title[:50]}")
-                            continue
-                    except ValueError:
-                        pass
+                elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
+                    pub_date = time.strftime("%Y-%m-%d", entry.updated_parsed)
+                # 严格日期过滤
+                if pub_date and not is_recent(pub_date):
+                    print(f"    skipped (old): {pub_date} {title[:40]}")
+                    continue
+                # 没有日期的也跳过
+                if not pub_date:
+                    print(f"    skipped (no date): {title[:40]}")
+                    continue
                 authors = [a.get("name", "") for a in entry.authors] if hasattr(entry, "authors") else ([entry.author] if hasattr(entry, "author") else [])
                 papers.append(Paper(
                     title=title,
@@ -237,6 +288,9 @@ def fetch_journal_rss() -> List[Paper]:
     print(f"  Journal RSS: {len(papers)} papers")
     return papers
 
+# ============================================================
+#  Source 5: MathOverflow
+# ============================================================
 def fetch_mathoverflow() -> List[Paper]:
     print(">>> [MathOverflow] querying...")
     papers = []
@@ -266,6 +320,9 @@ def fetch_mathoverflow() -> List[Paper]:
     print(f"  MathOverflow: {len(papers)} papers")
     return papers
 
+# ============================================================
+#  Dedup
+# ============================================================
 def deduplicate(all_papers: List[Paper]) -> List[Paper]:
     seen = {}
     for paper in all_papers:
@@ -284,6 +341,9 @@ def deduplicate(all_papers: List[Paper]) -> List[Paper]:
     print(f"Dedup: {len(all_papers)} -> {len(result)}")
     return result
 
+# ============================================================
+#  Build Prompt
+# ============================================================
 def build_prompt(papers: List[Paper]) -> str:
     papers_text = ""
     for i, p in enumerate(papers, 1):
@@ -326,6 +386,9 @@ def build_prompt(papers: List[Paper]) -> str:
 
 请用中文和 Markdown 格式输出。"""
 
+# ============================================================
+#  AI 调用
+# ============================================================
 def call_deepseek(prompt: str) -> str:
     from openai import OpenAI
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -376,6 +439,9 @@ def generate_ai_digest(papers: List[Paper]) -> str:
         traceback.print_exc()
         return fallback_digest(papers)
 
+# ============================================================
+#  发送邮件
+# ============================================================
 def send_email(digest: str, count: int, source_stats: dict):
     SENDER = os.environ["SENDER_EMAIL"]
     SMTP_PASSWORD = os.environ["SENDER_APP_PASSWORD"]
@@ -392,13 +458,13 @@ def send_email(digest: str, count: int, source_stats: dict):
     html_body = f"""
     <html><body style="font-family:Arial,sans-serif;max-width:760px;margin:auto;padding:20px;color:#333;line-height:1.7;">
     <h1 style="color:#1565C0;">Ramsey Theory 每日论文解读</h1>
-    <p style="color:#666;">{DATE_STR} | 共 {count} 篇 | {stats_html}</p>
+    <p style="color:#666;">{DATE_STR} | 共 {count} 篇新论文 | {stats_html}</p>
     <hr>{html_content}<hr>
     <p style="color:#aaa;font-size:11px;">数据源: arXiv + Semantic Scholar + OpenAlex + 期刊RSS + MathOverflow | AI: DeepSeek</p>
     </body></html>
     """
     msg = EmailMessage()
-    msg["Subject"] = f"Ramsey Theory 每日解读 {DATE_STR}（{count}篇）"
+    msg["Subject"] = f"Ramsey Theory 每日解读 {DATE_STR}（{count}篇新论文）"
     msg["From"] = formataddr(("Ramsey Digest", SENDER))
     msg["To"] = ", ".join(receivers)
     msg.set_content(digest)
@@ -408,8 +474,14 @@ def send_email(digest: str, count: int, source_stats: dict):
         server.send_message(msg)
     print(f"邮件已发送到: {', '.join(receivers)}")
 
+# ============================================================
+#  主函数
+# ============================================================
 def main():
     print(f"=== Ramsey Theory 每日论文解读 ({DATE_STR}) ===")
+    print(f"搜索窗口: {since_utc.strftime('%Y-%m-%d')} ~ {now_utc.strftime('%Y-%m-%d')}")
+    print(f"最旧允许: {oldest_allowed.strftime('%Y-%m-%d')}")
+
     all_papers = []
     source_stats = {}
     for name, fetcher in [
@@ -431,7 +503,7 @@ def main():
     unique_papers = filter_new_papers(unique_papers)
     total = len(unique_papers)
     print(f"\n来源统计: {source_stats}")
-    print(f"最终论文数: {total} 篇")
+    print(f"最终新论文数: {total} 篇")
 
     digest = generate_ai_digest(unique_papers) if unique_papers else f"# {DATE_STR}\n\n今日暂无新论文。"
     print(f"解读长度: {len(digest)} 字符")
